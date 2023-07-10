@@ -44,7 +44,7 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterPoint,
                        QgsProcessingParameterString)
 import os
-from .submodules import process_data
+from .submodules import processData
 
 
 DEFAULTS = {
@@ -263,7 +263,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         t_step = self.parameterAsDouble(parameters, 't_step', context)
         project.writeEntry('fds_isochrones', 't_step', str(t_step))
 
-        contourLayer=process_data.slct2contour(
+        contourLayer=processData.slct2contour(
             context, feedback, CHID, fds_path, quants[QUANTITY], threshold, t_step, crs.authid(), xy_offset)
 
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
