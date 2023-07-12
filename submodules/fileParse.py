@@ -3,25 +3,17 @@
  fileParse module
 
  This module contains a set of functions used to parse relevant data from
- various file types associated with FDS. The functionality is largely
- borrowed from the pyfdstools package:
- https://github.com/johodges/pyfdstools, but has been adapted for simplicity
- and to reduce requirements for external dependencies.
-
-/***************************************************************************
- *                                                                         *
- *   This program is free software; you can redistribute it and/or modify  *
- *   it under the terms of the GNU General Public License as published by  *
- *   the Free Software Foundation; either version 2 of the License, or     *
- *   (at your option) any later version.                                   *
- *                                                                         *
- ***************************************************************************/
+ various file types associated with FDS. Some parsing functionality is
+ borrowed from pyfdstools: https://github.com/johodges/pyfdstools,
+ but has been adapted for simplicity and to reduce requirements for
+ external dependencies.
 """
 
 import numpy as np
 import struct
 from collections import defaultdict
 
+# class to control parsing of slice files
 class SLCT:
     def __init__(self,file):
         self.f=open(file,'rb')
@@ -90,11 +82,12 @@ class SLCT:
         except:
             self.data = None
 
+# function to parse CHID.out for ORIGIN_LAT and ORIGIN_LON
 def parseOUT(file):
+    # values if not defined
     lat,lon=-1e6,-1e6
     with open(file) as f:
-        # while True:
-        for i in range(257):
+        while True:
             line=f.readline()
             # found geographic info
             if line[1:11]=='Geographic':
@@ -104,7 +97,7 @@ def parseOUT(file):
                 line=f.readline()
                 lon=float(line[20:])
                 break
-            # no geographic info available, stop reading file
+            # no geographic info found, stop reading file now
             if line[1:14]=='Miscellaneous':
                 break
 

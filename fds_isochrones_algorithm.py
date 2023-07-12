@@ -31,25 +31,6 @@ __copyright__ = '(C) 2023 by Eric Mueller'
 __revision__ = '$Format:%H$'
 
 from qgis.PyQt.QtCore import QCoreApplication
-# from qgis.core import (QgsProcessing,
-#                        QgsProject,
-#                        QgsPoint,
-#                        QgsFeatureSink,
-#                        QgsCoordinateReferenceSystem,
-#                        QgsCoordinateTransform,
-#                        QgsProcessingAlgorithm,
-#                        QgsProcessingParameterBoolean,
-#                        QgsProcessingParameterCrs,
-#                        QgsProcessingParameterDateTime,
-#                        QgsProcessingParameterEnum,
-#                        QgsProcessingParameterFeatureSource,
-#                        QgsProcessingParameterFeatureSink,
-#                        QgsProcessingParameterFile,
-#                        QgsProcessingParameterNumber,
-#                        QgsProcessingParameterString,
-#                        QgsProcessingUtils,
-#                        QgsStyle,
-#                        QgsRendererRangeLabelFormat)
 from qgis.core import *
 import os
 from .submodules import processData,fileParse
@@ -68,22 +49,8 @@ DEFAULTS = {
 quants = {'0':'LEVEL SET VALUE'}
 
 class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
-    """
-    This is an example algorithm that takes a vector layer and
-    creates a new identical one.
 
-    It is meant to be used as an example of how to create your own
-    algorithms and explain methods and variables used to do it. An
-    algorithm like this will be available in all elements, and there
-    is not need for additional work.
-
-    All Processing algorithms should extend the QgsProcessingAlgorithm
-    class.
-    """
-
-    # Constants used to refer to parameters and outputs. They will be
-    # used when calling the algorithm from another algorithm, or when
-    # calling from the QGIS console.
+    # Constants used to refer to parameters and outputs
 
     CHID = 'CHID'
     fds_path = 'fds_path'
@@ -97,13 +64,11 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config):
         """
-        Here we define the inputs and output of the algorithm, along
-        with some other properties.
+        define the inputs and output of the algorithm
         """
         project = QgsProject.instance()
 
         # Define parameter: CHID
-
         defaultValue, _ = project.readEntry('fds_isochrones', 'CHID', DEFAULTS['CHID'])
         self.addParameter(
             QgsProcessingParameterString(
@@ -115,7 +80,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Define parameter: fds_path
-
         defaultValue, _ = project.readEntry('fds_isochrones', 'fds_path', DEFAULTS['fds_path'])
         self.addParameter(
             QgsProcessingParameterFile(
@@ -128,7 +92,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Define parameter: crs
-
         defaultValue, _ = project.readEntry('fds_isochrones', 'crs', project.crs().authid())
         self.addParameter(
             QgsProcessingParameterCrs(
@@ -139,7 +102,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Define parameter: QUANTITY
-
         defaultValue, _ = project.readEntry('fds_isochrones', 'QUANTITY', DEFAULTS['QUANTITY'])
         self.addParameter(
             QgsProcessingParameterEnum(
@@ -316,31 +278,32 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         self.dest_id=dest_id
         self.intervals=round(maxTime/t_step)
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
+        # Return the results of the algorithm
         return {self.OUTPUT: self.dest_id}
 
     def postProcessAlgorithm(self, context, feedback):
         """
         PostProcessing to define the Symbology
         """
+        # identify the output map layer
         layer=QgsProcessingUtils.mapLayerFromString(self.dest_id,context)
+
+        # classify the features according to the time, using fixed t_step interval
+        renderer = QgsGraduatedSymbolRenderer('time')
+        renderer.setClassificationMethod(QgsClassificationEqualInterval())
+        renderer.updateClasses(layer, renderer.mode(), self.intervals)
+        # set color ramp to Magma
         default_style = QgsStyle().defaultStyle()
         color_ramp = default_style.colorRamp('Magma')
+        renderer.updateColorRamp(color_ramp)
+        # increase line width
+        renderer.setSymbolSizes(.5,.5)
+
+        # format the labels
         frmt = QgsRendererRangeLabelFormat()
         frmt.setFormat("%1 - %2")
         frmt.setPrecision(-1)
         frmt.setTrimTrailingZeroes(True)
-
-        renderer = QgsGraduatedSymbolRenderer('time')
-        renderer.setClassificationMethod(QgsClassificationEqualInterval())
-        renderer.updateClasses(layer, renderer.mode(), self.intervals)
-        renderer.updateColorRamp(color_ramp)
-
         renderer.setLabelFormat(frmt)
 
         layer.setRenderer(renderer)
@@ -350,11 +313,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
     def name(self):
         """
-        Returns the algorithm name, used for identifying the algorithm. This
-        string should be fixed for the algorithm, and must not be localised.
-        The name should be unique within each provider. Names should contain
-        lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
+        Returns the algorithm name, used for identifying the algorithm
         """
         return 'FDS Isochrones'
 
@@ -367,18 +326,13 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
     def group(self):
         """
-        Returns the name of the group this algorithm belongs to. This string
-        should be localised.
+        Returns the name of the group this algorithm belongs to
         """
         return self.tr(self.groupId())
 
     def groupId(self):
         """
-        Returns the unique ID of the group this algorithm belongs to. This
-        string should be fixed for the algorithm, and must not be localised.
-        The group id should be unique within each provider. Group id should
-        contain lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
+        Returns the unique ID of the group this algorithm belongs to
         """
         return ''
 
