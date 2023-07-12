@@ -1,6 +1,6 @@
 """
 /***************************************************************************
- parseFDS module
+ fileParse module
 
  This module contains a set of functions used to parse relevant data from
  various file types associated with FDS. The functionality is largely
@@ -73,7 +73,6 @@ class SLCT:
 
     # Return a single time and data array from a slice file
     def readRecord(self):
-        print(self.f.tell())
 
         # if at the start of the file
         if self.f.tell()<142:
@@ -91,31 +90,50 @@ class SLCT:
         except:
             self.data = None
 
+def parseOUT(file):
+    lat,lon=-1e6,-1e6
+    with open(file) as f:
+        # while True:
+        for i in range(257):
+            line=f.readline()
+            # found geographic info
+            if line[1:11]=='Geographic':
+                line=f.readline()
+                line=f.readline()
+                lat=float(line[20:])
+                line=f.readline()
+                lon=float(line[20:])
+                break
+            # no geographic info available, stop reading file
+            if line[1:14]=='Miscellaneous':
+                break
+
+    return lat,lon
+
 # parse SMV file, in this case to find grid and SLCT information
 def parseSMV(file):
-    f=open(file)
-    linesSMV = f.readlines()
+    with open(file) as f:
+        linesSMV = f.readlines()
 
-    grids=[]
-    SLCTfiles=defaultdict(bool)
-    for il in range(len(linesSMV)):
-        if ('GRID' in linesSMV[il]):
-            gridTRNX, gridTRNY, gridTRNZ = parseGRID(linesSMV, il)
-            grids.append([gridTRNX.copy(),
-                          gridTRNY.copy(),
-                          gridTRNZ.copy()])
+        grids=[]
+        SLCTfiles=defaultdict(bool)
+        for il in range(len(linesSMV)):
+            if ('GRID' in linesSMV[il]):
+                gridTRNX, gridTRNY, gridTRNZ = parseGRID(linesSMV, il)
+                grids.append([gridTRNX.copy(),
+                              gridTRNY.copy(),
+                              gridTRNZ.copy()])
 
-        if ('SLCT' in linesSMV[il]):
-            file = '%s.sf'%(linesSMV[il+1][1:].split('.sf')[0])
-            SLCTfiles[file] = defaultdict(bool)
-            SLCTfiles[file]['QUANTITY'] = linesSMV[il+2].strip()
-            SLCTfiles[file]['SHORTNAME'] = linesSMV[il+3].strip()
-            SLCTfiles[file]['UNITS'] = linesSMV[il+4].strip()
-            SLCTfiles[file]['LINETEXT'] = linesSMV[il]
-            SLCTfiles[file]['MESH']=int(SLCTfiles[file]['LINETEXT'][5:10])
-            SLCTfiles[file]['AGL']=float(SLCTfiles[file]['LINETEXT'][11:20])
+            if ('SLCT' in linesSMV[il]):
+                file = '%s.sf'%(linesSMV[il+1][1:].split('.sf')[0])
+                SLCTfiles[file] = defaultdict(bool)
+                SLCTfiles[file]['QUANTITY'] = linesSMV[il+2].strip()
+                SLCTfiles[file]['SHORTNAME'] = linesSMV[il+3].strip()
+                SLCTfiles[file]['UNITS'] = linesSMV[il+4].strip()
+                SLCTfiles[file]['LINETEXT'] = linesSMV[il]
+                SLCTfiles[file]['MESH']=int(SLCTfiles[file]['LINETEXT'][5:10])
+                SLCTfiles[file]['AGL']=float(SLCTfiles[file]['LINETEXT'][11:20])
 
-    f.close()
     return SLCTfiles,grids
 
 def parseGRID(lines, i):
@@ -138,3 +156,5 @@ def parseGRID(lines, i):
     gridTRNY = np.array(gridTRNY)
     gridTRNZ = np.array(gridTRNZ)
     return gridTRNX, gridTRNY, gridTRNZ
+
+

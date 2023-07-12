@@ -1,19 +1,30 @@
 import processing
 import numpy as np
-from parseFDS import SLCT,parseSMV
+from .fileParse import SLCT,parseSMV,parseOUT
 from collections import defaultdict
+from qgis.PyQt.QtCore import QVariant
 from qgis.gui import QgsMapCanvas
 from qgis.core import (
     QgsProcessing,
     QgsProject,
     QgsFeature,
+    QgsField,
     QgsGeometry,
-    QgsPoint,
     QgsPointXY,
     QgsVectorLayer)
 
 
-def slct2contour(context, feedback, CHID, fds_path, QUANTITY, threshold, t_step, crs, xy_offset):
+def slct2contour(
+    feedback,
+    CHID,
+    fds_path,
+    QUANTITY,
+    threshold,
+    t_step,
+    crs,
+    xy_offset,
+    dateTime,
+    samplePoints):
     """
 
     Parameters
@@ -30,8 +41,12 @@ def slct2contour(context, feedback, CHID, fds_path, QUANTITY, threshold, t_step,
         time increment between isochrones
     crs: str
         code for coordinate reference system (e.g. EPSG:5070 for NAD83/Conus Albers)
-    offset (optional) : QgisPointXY
+    offset : QgisPoint
         [x_o, y_o] adjustment of domain to CRS units, if necessary
+    dateTime : QDateTime
+        Date and time to be added for temporal animation
+    samplePoints: bool
+        save FDS sample points as temporary layer
 
     Returns
     -------
@@ -41,7 +56,7 @@ def slct2contour(context, feedback, CHID, fds_path, QUANTITY, threshold, t_step,
 
     """
 
-    # parse SMV file
+    # parse SMV file for SLCT and grid information
     [SLCTfiles,grids]=parseSMV(fds_path+'/'+CHID+'.smv')
 
     append=False
@@ -74,23 +89,37 @@ def slct2contour(context, feedback, CHID, fds_path, QUANTITY, threshold, t_step,
 
                 #create temporary layer containing sample points
                 if not append:
-                    uri='Point?crs='+crs+'&field=id:integer&field=time:double&index=yes'
+                    uri='Point?crs='+crs.authid()+'&field=id:integer&field=time:double&index=yes'
                     pointLayer=QgsVectorLayer(uri, 'fds_sample_points', 'memory')
                     pointLayer.startEditing()
                     append=True
 
-                pointLayer = _addLayerPoints(
+                pointLayer,maxTime = _addLayerPoints(
                     feedback,arrival_data,grids[SLCTfiles[SLCTfile]['MESH']-1],pointLayer,xy_offset)
 
     pointLayer.commitChanges()
-    # for debug, add layer of fds sample points to map
-    QgsProject.instance().addMapLayer(pointLayer)
-    # layers=QgsProject.instance().layerTreeRoot().findLayerIds()
-    # QgsProject.instance().layerTreeRoot().findLayer(pointLayer).setItemVisibilityChecked(False)
-    # context.temporaryLayerStore().addMapLayer(pointLayer)
+    # optional, add layer of fds sample points to map
+    QgsProject.instance().addMapLayer(pointLayer,addToLegend=samplePoints)
+
     contourOutput=_createContourLayer(pointLayer.source(),t_step)
 
-    return contourOutput
+    if not samplePoints:
+        QgsProject.instance().removeMapLayer(pointLayer)
+
+    # layer = QgsProject().instance().mapLayersByName(layer_name)[0]
+
+    contourOutput.startEditing()
+    contourOutput.deleteAttribute(2)
+    # add datetime field for animation purposes
+    if not dateTime.isNull():
+        contourOutput.addAttribute(QgsField('datetime',QVariant.DateTime))
+        for feature in contourOutput.getFeatures():
+            feature['datetime'] = dateTime.addMSecs(round(1000*feature['time']))
+            contourOutput.updateFeature(feature)
+        contourOutput.commitChanges()
+        contourOutput.rollBack()
+
+    return contourOutput,maxTime
 
 
 # add to vector file of points from a 2D numpy array
@@ -101,6 +130,7 @@ def _addLayerPoints(feedback,data,grid,pointLayer,xy_offset):
     feedback.pushInfo('Extracting SCLT data points...')
     total=len(grid[0])*len(grid[1])
     count=0
+    maxval=0
     for ir in grid[0]:
         for jr in grid[1]:
             # Stop the algorithm if cancel button has been clicked
@@ -111,8 +141,10 @@ def _addLayerPoints(feedback,data,grid,pointLayer,xy_offset):
             point.setGeometry(QgsGeometry.fromPointXY(
                 QgsPointXY(ir[1]+xy_offset.x(),jr[1]+xy_offset.y())))
             i,j=int(ir[0]),int(jr[0])
-            time=data[i,j]
-            point.setAttributes([count,time.item()])
+            time=data[i,j].item()
+            if time>maxval:
+                maxval=time
+            point.setAttributes([count,time])
             pointLayer.addFeatures([point])
 
             # Update the progress bar
@@ -120,7 +152,7 @@ def _addLayerPoints(feedback,data,grid,pointLayer,xy_offset):
 
 
 
-    return pointLayer
+    return pointLayer,maxval
 
 # get a vector file of points from a 2D numpy array
 def _createContourLayer(inputSource,t_step):

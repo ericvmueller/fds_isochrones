@@ -31,29 +31,38 @@ __copyright__ = '(C) 2023 by Eric Mueller'
 __revision__ = '$Format:%H$'
 
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import (QgsProcessing,
-                       QgsProject,
-                       QgsFeatureSink,
-                       QgsProcessingAlgorithm,
-                       QgsProcessingParameterCrs,
-                       QgsProcessingParameterEnum,
-                       QgsProcessingParameterFeatureSource,
-                       QgsProcessingParameterFeatureSink,
-                       QgsProcessingParameterFile,
-                       QgsProcessingParameterNumber,
-                       QgsProcessingParameterPoint,
-                       QgsProcessingParameterString)
+# from qgis.core import (QgsProcessing,
+#                        QgsProject,
+#                        QgsPoint,
+#                        QgsFeatureSink,
+#                        QgsCoordinateReferenceSystem,
+#                        QgsCoordinateTransform,
+#                        QgsProcessingAlgorithm,
+#                        QgsProcessingParameterBoolean,
+#                        QgsProcessingParameterCrs,
+#                        QgsProcessingParameterDateTime,
+#                        QgsProcessingParameterEnum,
+#                        QgsProcessingParameterFeatureSource,
+#                        QgsProcessingParameterFeatureSink,
+#                        QgsProcessingParameterFile,
+#                        QgsProcessingParameterNumber,
+#                        QgsProcessingParameterString,
+#                        QgsProcessingUtils,
+#                        QgsStyle,
+#                        QgsRendererRangeLabelFormat)
+from qgis.core import *
 import os
-from .submodules import processData
+from .submodules import processData,fileParse
 
 
 DEFAULTS = {
-    'CHID': None,
+    'CHID': 'None',
     'fds_path': './',
-    'xy_offset': None,
     't_step': '10',
     'threshold': '0',
-    'QUANTITY': '0'
+    'QUANTITY': '0',
+    'dateTime': 'None',
+    'samplePoints': 'False'
 }
 
 quants = {'0':'LEVEL SET VALUE'}
@@ -82,9 +91,9 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
     threshold = 'threshold'
     t_step = 't_step'
     OUTPUT = 'OUTPUT'
-    xy_offset = 'xy_offset'
     crs = 'crs'
-
+    dateTime = 'dateTime'
+    samplePoints = 'samplePoints'
 
     def initAlgorithm(self, config):
         """
@@ -129,18 +138,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        # Define parameter: xy_offset
-
-        defaultValue, _ = project.readEntry('fds_isochrones', 'xy_offset', DEFAULTS['xy_offset'])
-        self.addParameter(
-            QgsProcessingParameterPoint(
-                name=self.xy_offset,
-                description='xy offset (for example ORIGIN_LAT,ORIGIN_LON in FDS)',
-                defaultValue=defaultValue,
-                optional=True
-            )
-        )
-
         # Define parameter: QUANTITY
 
         defaultValue, _ = project.readEntry('fds_isochrones', 'QUANTITY', DEFAULTS['QUANTITY'])
@@ -154,7 +151,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Define parameter: threshold
-
         defaultValue, _ = project.readEntry('fds_isochrones', 'threshold', DEFAULTS['threshold'])
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -167,7 +163,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Define parameter: t_step
-
         defaultValue, _ = project.readEntry('fds_isochrones', 't_step', DEFAULTS['t_step'])
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -180,23 +175,32 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        # # We add the input vector features source. It can have any kind of
-        # # geometry.
-        # self.addParameter(
-        #     QgsProcessingParameterFeatureSource(
-        #         self.INPUT,
-        #         self.tr('Input layer'),
-        #         [QgsProcessing.TypeVectorAnyGeometry]
-        #     )
-        # )
+        # Define parameter: dateTime
+        defaultValue, _ = project.readEntry('fds_isochrones', 'dateTime', DEFAULTS['dateTime'])
+        self.addParameter(
+            QgsProcessingParameterDateTime(
+                name=self.dateTime,
+                description='Ignition time (used for animation)',
+                # defaultValue=defaultValue,
+                optional=True
+            )
+        )
 
-        # Add a feature sink in which to store our processed features (this
-        # usually takes the form of a newly created vector layer when the
-        # algorithm is run in QGIS).
+        # Define parameter: samplePoints
+        defaultValue, _ = project.readEntry('fds_isochrones', 'samplePoints', DEFAULTS['samplePoints'])
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                name=self.samplePoints,
+                description='Save FDS sample points as temporary layer',
+                defaultValue=False
+            )
+        )
+
+        # Add a feature sink in which to store processed features
         self.addParameter(
             QgsProcessingParameterFeatureSink(
-                self.OUTPUT,
-                self.tr('Output layer')
+                name=self.OUTPUT,
+                description='Output layer'
             )
         )
 
@@ -242,29 +246,52 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         project.writeEntry('fds_isochrones', 'crs', crs.authid())
 
-        # Get parameter: xy_offset
-        xy_offset = self.parameterAsPoint(parameters, 'xy_offset', context, crs)
-        if not xy_offset:
-            raise QgsProcessingException(
-                self.invalidSourceError(xy_offset, 'xy_offset')
-            )
-        project.writeEntry('fds_isochrones', 'xy_offset', str(xy_offset))
-
         # Get parameter: QUANTITY
         QUANTITY = self.parameterAsString(parameters, 'QUANTITY', context)
         project.writeEntry('fds_isochrones', 'QUANTITY', QUANTITY)
 
         # Get parameter: threshold
         threshold = self.parameterAsDouble(parameters, 'threshold', context)
-        feedback.pushInfo(str(threshold))
         project.writeEntry('fds_isochrones', 'threshold', str(threshold))
 
         # Get parameter: t_step
         t_step = self.parameterAsDouble(parameters, 't_step', context)
         project.writeEntry('fds_isochrones', 't_step', str(t_step))
 
-        contourLayer=processData.slct2contour(
-            context, feedback, CHID, fds_path, quants[QUANTITY], threshold, t_step, crs.authid(), xy_offset)
+        # Get parameter: dateTime
+        dateTime = self.parameterAsDateTime(parameters, 'dateTime', context)
+        project.writeEntry('fds_isochrones', 'dateTime', str(dateTime))
+
+        # Get parameter: samplePoints
+        samplePoints = self.parameterAsBoolean(parameters, 'samplePoints', context)
+        project.writeEntry('fds_isochrones', 'samplePoints', str(samplePoints))
+
+        # parse OUT file for geographic information
+        origin_lat,origin_lon=fileParse.parseOUT(fds_path+'/'+CHID+'.out')
+        # if FDS origin successfully determined, shift the data
+        if ((origin_lat>-1e6) and (origin_lon>-1e6)):
+            # convert from WGS84 to relevant CRS
+            wgs84_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            wgs84_to_fds_tr = QgsCoordinateTransform(
+                        wgs84_crs, crs, project)
+            xy_offset = QgsPoint(x=origin_lon,y=origin_lat)
+            xy_offset.transform(wgs84_to_fds_tr)
+
+        else:
+            xy_offset = QgsPoint(x=0,y=0)
+
+
+        contourLayer,maxTime=processData.slct2contour(
+            feedback,
+            CHID,
+            fds_path,
+            quants[QUANTITY],
+            threshold,
+            t_step,
+            crs,
+            xy_offset,
+            dateTime,
+            samplePoints)
 
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
                 context, contourLayer.fields(), contourLayer.wkbType(),
@@ -285,13 +312,41 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             # Update the progress bar
             feedback.setProgress(int(current * total))
 
+        # save information for updating symbology
+        self.dest_id=dest_id
+        self.intervals=round(maxTime/t_step)
+
         # Return the results of the algorithm. In this case our only result is
         # the feature sink which contains the processed features, but some
         # algorithms may return multiple feature sinks, calculated numeric
         # statistics, etc. These should all be included in the returned
         # dictionary, with keys matching the feature corresponding parameter
         # or output names.
-        return {self.OUTPUT: dest_id}
+        return {self.OUTPUT: self.dest_id}
+
+    def postProcessAlgorithm(self, context, feedback):
+        """
+        PostProcessing to define the Symbology
+        """
+        layer=QgsProcessingUtils.mapLayerFromString(self.dest_id,context)
+        default_style = QgsStyle().defaultStyle()
+        color_ramp = default_style.colorRamp('Magma')
+        frmt = QgsRendererRangeLabelFormat()
+        frmt.setFormat("%1 - %2")
+        frmt.setPrecision(-1)
+        frmt.setTrimTrailingZeroes(True)
+
+        renderer = QgsGraduatedSymbolRenderer('time')
+        renderer.setClassificationMethod(QgsClassificationEqualInterval())
+        renderer.updateClasses(layer, renderer.mode(), self.intervals)
+        renderer.updateColorRamp(color_ramp)
+
+        renderer.setLabelFormat(frmt)
+
+        layer.setRenderer(renderer)
+        layer.triggerRepaint()
+
+        return {self.OUTPUT: self.dest_id}
 
     def name(self):
         """
