@@ -46,7 +46,7 @@ DEFAULTS = {
     'samplePoints': 'False'
 }
 
-quants = {'0':'LEVEL SET VALUE'}
+quants = {'0':'LEVEL SET VALUE','1':'TIME OF ARRIVAL'}
 
 class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
@@ -107,7 +107,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterEnum(
                 name=self.QUANTITY,
                 description='AGL Slice QUANTITY',
-                options=['LEVEL SET VALUE'],
+                options=['LEVEL SET VALUE','TIME OF ARRIVAL'],
                 defaultValue=defaultValue
             )
         )
@@ -241,7 +241,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
         else:
             xy_offset = QgsPoint(x=0,y=0)
-
 
         contourLayer,maxTime=processData.slct2contour(
             feedback,

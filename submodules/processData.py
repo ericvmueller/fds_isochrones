@@ -17,6 +17,7 @@ from qgis.PyQt.QtCore import QVariant
 from qgis.gui import QgsMapCanvas
 from qgis.core import (
     QgsProcessing,
+    QgsProcessingException,
     QgsProject,
     QgsFeature,
     QgsField,
@@ -76,12 +77,14 @@ def slct2contour(
     # scan SCLT files and extract relevant data
     append=False
     maxval=0
+    slct_found=False
     for SLCTfile in SLCTfiles:
         with SLCT(fds_path+'/'+SLCTfile) as slct:
             slct.readHeader()
 
             # export if correct quantity
             if (slct.quantity == QUANTITY):
+                slct_found=True
                 feedback.pushInfo('Reading from '+SLCTfile+'...')
                 # get data shape
                 (NX, NY, NZ) = (slct.eX-slct.iX, slct.eY-slct.iY, slct.eZ-slct.iZ)
@@ -97,7 +100,12 @@ def slct2contour(
                     slct.readRecord()
                     tmp = np.reshape(slct.data, shape, order='F')
                     # use threshold to identify arrival
-                    arrival_data[(tmp >= threshold) & (arrival_data<0)] = slct.currentTime
+                    if not QUANTITY=='TIME OF ARRIVAL':
+                        arrival_data[(tmp >= threshold) & (arrival_data<0)] = slct.currentTime
+
+                # Time of arrival can be taken directly
+                if QUANTITY=='TIME OF ARRIVAL':
+                    arrival_data[:] = tmp
 
                 # all SCLT should be 2D (x and y)
                 arrival_data=np.squeeze(arrival_data)
@@ -114,6 +122,9 @@ def slct2contour(
 
                 pointLayer = _addLayerPoints(
                     feedback,arrival_data,grids[SLCTfiles[SLCTfile]['MESH']-1],pointLayer,xy_offset)
+
+    if not slct_found:
+        raise QgsProcessingException('ERROR: No relevant slice files found')
 
     pointLayer.commitChanges()
     # optional, add layer of fds sample points to map
@@ -171,7 +182,7 @@ def _createContourLayer(inputSource,t_step):
     return  processing.run("contourplugin:generatecontours",
             {'InputLayer':inputSource,
             'InputField':'"time"',
-            'DuplicatePointTolerance':0,
+            'DuplicatePointTolerance':0.001,
             'ContourType':0,
             'ExtendOption':None,
             'ContourMethod':3,

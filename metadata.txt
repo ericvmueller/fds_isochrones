@@ -12,8 +12,8 @@ email=ericvmueller@gmail.com
 
 about=Import FDS data (BNDF files) and use these to generate isochrones of fire progression. Initial support is for the 'FIRE ARRIVAL TIME' quantity.
 
-tracker=http://bugs
-repository=http://repo
+tracker=https://github.com/ericvmueller/fds_isochrones/issues
+repository=https://github.com/ericvmueller/fds_isochrones
 # End of mandatory metadata
 
 # Recommended items:
@@ -25,7 +25,7 @@ hasProcessingProvider=yes
 # Tags are comma separated with spaces allowed
 tags=python
 
-homepage=http://homepage
+# homepage=http://homepage
 category=Analysis
 icon=icon.png
 # experimental flag
