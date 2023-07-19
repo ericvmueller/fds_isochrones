@@ -73,7 +73,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterString(
                 name=self.CHID,
-                description='FDS case identificator (CHID)',
+                description='FDS case identifier (CHID)',
                 multiLine=False,
                 defaultValue=defaultValue
             )
