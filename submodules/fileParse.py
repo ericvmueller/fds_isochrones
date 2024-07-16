@@ -139,6 +139,10 @@ def parseGRID(lines, i):
     xlines = lines[xind0:xind1]
     ylines = lines[yind0:yind1]
     zlines = lines[zind0:zind1]
+    # check for z stretching
+    if (int(zlines[0][3:5])==-1):
+        delta=(zind1-zind0-2)
+        zlines = lines[zind0+delta:zind1+delta]
     for x in xlines:
         gridTRNX.append([float(y) for y in x.replace('\n','').split()])
     for x in ylines:

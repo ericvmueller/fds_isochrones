@@ -37,16 +37,18 @@ from .submodules import processData,fileParse
 
 
 DEFAULTS = {
-    'CHID': 'None',
+    'CHID': '',
     'fds_path': './',
     't_step': '10',
     'threshold': '0',
     'QUANTITY': '0',
-    'dateTime': 'None',
+    'dateTime': '',
+    'origin': 'None',
+    'dx_out': '',
     'samplePoints': 'False'
 }
 
-quants = {'0':'LEVEL SET VALUE','1':'TIME OF ARRIVAL'}
+quants = {'0':'TIME OF ARRIVAL','1':'LEVEL SET VALUE'}
 
 class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
@@ -59,6 +61,8 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
     t_step = 't_step'
     OUTPUT = 'OUTPUT'
     crs = 'crs'
+    origin = 'origin'
+    dx_out = 'dx_out'
     dateTime = 'dateTime'
     samplePoints = 'samplePoints'
 
@@ -101,13 +105,25 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        # Define parameter: origin
+        defaultValue, _ = project.readEntry('fds_isochrones', 'origin', DEFAULTS['origin'])
+        print(defaultValue)
+        self.addParameter(
+            QgsProcessingParameterPoint(
+                name=self.origin,
+                description='FDS origin in CRS (will be obtained from CHID.out if available)',
+                defaultValue=defaultValue,
+                optional=True
+            )
+        )
+
         # Define parameter: QUANTITY
         defaultValue, _ = project.readEntry('fds_isochrones', 'QUANTITY', DEFAULTS['QUANTITY'])
         self.addParameter(
             QgsProcessingParameterEnum(
                 name=self.QUANTITY,
                 description='AGL Slice QUANTITY',
-                options=['LEVEL SET VALUE','TIME OF ARRIVAL'],
+                options=['TIME OF ARRIVAL','LEVEL SET VALUE'],
                 defaultValue=defaultValue
             )
         )
@@ -137,12 +153,25 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        # Define parameter: dx_out
+        defaultValue, _ = project.readEntry('fds_isochrones', 'dx_out', DEFAULTS['dx_out'])
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                name=self.dx_out,
+                description='Filtered output resolution (m)',
+                type=QgsProcessingParameterNumber.Double,
+                # defaultValue=defaultValue,
+                optional=True,
+                minValue=0.01
+            )
+        )
+
         # Define parameter: dateTime
         defaultValue, _ = project.readEntry('fds_isochrones', 'dateTime', DEFAULTS['dateTime'])
         self.addParameter(
             QgsProcessingParameterDateTime(
                 name=self.dateTime,
-                description='Ignition time (used for animation)',
+                description='Ignition datetime for animation',
                 # defaultValue=defaultValue,
                 optional=True
             )
@@ -208,6 +237,11 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             )
         project.writeEntry('fds_isochrones', 'crs', crs.authid())
 
+        # Get parameter: origin
+        origin = self.parameterAsPoint(parameters, 'origin', context, crs)
+        print('write '+str(origin))
+        project.writeEntry('fds_isochrones', 'origin', str(origin))
+
         # Get parameter: QUANTITY
         QUANTITY = self.parameterAsString(parameters, 'QUANTITY', context)
         project.writeEntry('fds_isochrones', 'QUANTITY', QUANTITY)
@@ -219,6 +253,10 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         # Get parameter: t_step
         t_step = self.parameterAsDouble(parameters, 't_step', context)
         project.writeEntry('fds_isochrones', 't_step', str(t_step))
+
+        # Get parameter: dx_out
+        dx_out = self.parameterAsDouble(parameters, 'dx_out', context)
+        project.writeEntry('fds_isochrones', 'dx_out', str(dx_out))
 
         # Get parameter: dateTime
         dateTime = self.parameterAsDateTime(parameters, 'dateTime', context)
@@ -240,7 +278,8 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             xy_offset.transform(wgs84_to_fds_tr)
 
         else:
-            xy_offset = QgsPoint(x=0,y=0)
+            # xy_offset = QgsPoint(x=0,y=0)
+            xy_offset = origin
 
         contourLayer,maxTime=processData.slct2contour(
             feedback,
@@ -249,6 +288,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             quants[QUANTITY],
             threshold,
             t_step,
+            dx_out,
             crs,
             xy_offset,
             dateTime,
