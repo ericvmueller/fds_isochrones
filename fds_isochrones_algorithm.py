@@ -107,7 +107,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
         # Define parameter: origin
         defaultValue, _ = project.readEntry('fds_isochrones', 'origin', DEFAULTS['origin'])
-        print(defaultValue)
         self.addParameter(
             QgsProcessingParameterPoint(
                 name=self.origin,
@@ -239,7 +238,6 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
         # Get parameter: origin
         origin = self.parameterAsPoint(parameters, 'origin', context, crs)
-        print('write '+str(origin))
         project.writeEntry('fds_isochrones', 'origin', str(origin))
 
         # Get parameter: QUANTITY

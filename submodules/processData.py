@@ -80,9 +80,11 @@ def slct2contour(
 
     # scan SCLT files and extract relevant data
     slct_found=False
-    toa=[]
+    t_a=[]
     x=[]
     y=[]
+    dx=[]
+    dy=[]
     for SLCTfile in SLCTfiles:
         with SLCT(fds_path+'/'+SLCTfile) as slct:
             slct.readHeader()
@@ -118,10 +120,15 @@ def slct2contour(
                     # x cell centers
                     xc=(xn[1:] + xn[:-1]) / 2
                     yc=(yn[1:] + yn[:-1]) / 2
+                    # cell sizes
+                    dxn = xn[1:] - xn[:-1]
+                    dyn = yn[1:] - yn[:-1]
                     # append to data list
                     x.append(np.tile(xc,len(yc)))
                     y.append(np.repeat(yc,len(xc)))
-                    toa.append(tmp.flatten(order='F'))
+                    dx.append(np.tile(dxn,len(dyn)))
+                    dy.append(np.repeat(dyn,len(dxn)))
+                    t_a.append(tmp.flatten(order='F'))
 
                 # anywhere that the fire does not arrive gets max val (to make nice contours)
                 # maxTime=slct.currentTime.item()
@@ -133,11 +140,20 @@ def slct2contour(
     # strip no arrival values
     x=np.concatenate(x)
     y=np.concatenate(y)
-    toa=np.concatenate(toa)
-    x=x[toa<9E7]
-    y=y[toa<9E7]
-    toa=toa[toa<9E7]
-    maxTime = max(toa)
+    dx=np.concatenate(dx)
+    dy=np.concatenate(dy)
+    t_a=np.concatenate(t_a)
+    x=x[t_a<9E7]
+    y=y[t_a<9E7]
+    dx=dx[t_a<9E7]
+    dy=dy[t_a<9E7]
+    t_a=t_a[t_a<9E7]
+    maxTime = max(t_a)
+
+    #create temporary layer containing sample points
+    uri='Point?crs='+crs.authid()+'&field=id:integer&field=time:double&index=yes'
+    pointLayer=QgsVectorLayer(uri, 'fds_sample_points', 'memory')
+    pointLayer.startEditing()
 
     # do resampling
     if not dx_out==0:
@@ -145,21 +161,18 @@ def slct2contour(
         x_i = np.arange(min(x),max(x),dx_out)
         y_i = np.arange(min(y),max(y),dx_out)
         [xxi,yyi]=np.meshgrid(x_i,y_i)
-        toa_i=interpolate.griddata((x,y),toa,(xxi,yyi))
+        t_ai=interpolate.griddata((x,y),t_a,(xxi,yyi))
         # box filter
         box = 1/9*np.ones((3,3))
-        toa_i=signal.convolve2d(toa_i, box, boundary='symm', mode='same')
-        x=xxi[~np.isnan(toa_i)]
-        y=yyi[~np.isnan(toa_i)]
-        toa=toa_i[~np.isnan(toa_i)]
+        t_ai=signal.convolve2d(t_ai, box, boundary='symm', mode='same')
+        x=xxi[~np.isnan(t_ai)]
+        y=yyi[~np.isnan(t_ai)]
+        t_ai=t_ai[~np.isnan(t_ai)]
 
-    #create temporary layer containing sample points
-    uri='Point?crs='+crs.authid()+'&field=id:integer&field=time:double&index=yes'
-    pointLayer=QgsVectorLayer(uri, 'fds_sample_points', 'memory')
-    pointLayer.startEditing()
+        pointLayer = _addLayerPoints(feedback,x,y,t_ai,pointLayer,xy_offset)
 
-    pointLayer = _addLayerPoints(
-        feedback,x,y,toa,pointLayer,xy_offset)
+    else:
+        pointLayer = _addLayerPoints(feedback,x,y,t_a,pointLayer,xy_offset)
 
 
     pointLayer.commitChanges()
@@ -174,6 +187,10 @@ def slct2contour(
     contourOutput.startEditing()
     # contour remove unused attribute from contour plugin
     contourOutput.deleteAttribute(2)
+
+    # add burned area estimation
+    contourOutput = _addBurnedArea(feedback,contourOutput,dx,dy,t_a)
+
     # add datetime field for animation purposes
     if not dateTime.isNull():
         contourOutput = _addDateTime(feedback,contourOutput,dateTime)
@@ -201,7 +218,7 @@ def _addLayerPoints(feedback,x,y,data,pointLayer,xy_offset):
         # shift FDS location relative to global origin
         point.setGeometry(QgsGeometry.fromPointXY(
             QgsPointXY(xi+xy_offset.x(),yi+xy_offset.y())))
-        point.setAttributes([count,np.round(ti,3)])
+        point.setAttributes([count,float(np.round(ti,3))])
         pointLayer.addFeatures([point])
 
         # Update the progress bar
@@ -239,6 +256,21 @@ def _addDateTime(feedback,contourLayer,dateTime):
             break
         # add FDS time to igniton datetime
         feature['datetime'] = dateTime.addMSecs(round(1000*feature['time']))
+        contourLayer.updateFeature(feature)
+
+    return contourLayer
+
+
+# add datetime attribute to contour layer
+def _addBurnedArea(feedback,contourLayer,dx,dy,t_a):
+
+    contourLayer.addAttribute(QgsField('burned_area',QVariant.Double))
+    for feature in contourLayer.getFeatures():
+        # Stop the algorithm if cancel button has been clicked
+        if feedback.isCanceled():
+            break
+        # add FDS time to igniton datetime
+        feature['burned_area'] = float(sum(dx[t_a<=feature['time']]*dy[t_a<=feature['time']]))
         contourLayer.updateFeature(feature)
 
     return contourLayer
