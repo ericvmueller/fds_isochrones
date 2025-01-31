@@ -48,7 +48,7 @@ DEFAULTS = {
     'samplePoints': 'False'
 }
 
-quants = {'0':'TIME OF ARRIVAL','1':'LEVEL SET VALUE'}
+quants = {'0':'FIRE ARRIVAL TIME'}
 
 class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
 
@@ -122,22 +122,22 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterEnum(
                 name=self.QUANTITY,
                 description='AGL Slice QUANTITY',
-                options=['TIME OF ARRIVAL','LEVEL SET VALUE'],
+                options=['FIRE ARRIVAL TIME'],
                 defaultValue=defaultValue
             )
         )
 
-        # Define parameter: threshold
-        defaultValue, _ = project.readEntry('fds_isochrones', 'threshold', DEFAULTS['threshold'])
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                name=self.threshold,
-                description='Threshold QUANTITY at fire arrival (e.g. 0 for LEVEL SET VALUE)',
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=defaultValue,
-                optional=False
-            )
-        )
+        # # Define parameter: threshold
+        # defaultValue, _ = project.readEntry('fds_isochrones', 'threshold', DEFAULTS['threshold'])
+        # self.addParameter(
+        #     QgsProcessingParameterNumber(
+        #         name=self.threshold,
+        #         description='Threshold QUANTITY at fire arrival (e.g. 0 for LEVEL SET VALUE)',
+        #         type=QgsProcessingParameterNumber.Double,
+        #         defaultValue=defaultValue,
+        #         optional=False
+        #     )
+        # )
 
         # Define parameter: t_step
         defaultValue, _ = project.readEntry('fds_isochrones', 't_step', DEFAULTS['t_step'])
@@ -244,9 +244,10 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
         QUANTITY = self.parameterAsString(parameters, 'QUANTITY', context)
         project.writeEntry('fds_isochrones', 'QUANTITY', QUANTITY)
 
-        # Get parameter: threshold
-        threshold = self.parameterAsDouble(parameters, 'threshold', context)
-        project.writeEntry('fds_isochrones', 'threshold', str(threshold))
+        # # Get parameter: threshold
+        # threshold = self.parameterAsDouble(parameters, 'threshold', context)
+        # project.writeEntry('fds_isochrones', 'threshold', str(threshold))
+        threshold=0
 
         # Get parameter: t_step
         t_step = self.parameterAsDouble(parameters, 't_step', context)
@@ -279,7 +280,7 @@ class fdsIsochronesAlgorithm(QgsProcessingAlgorithm):
             # xy_offset = QgsPoint(x=0,y=0)
             xy_offset = origin
 
-        contourLayer,maxTime=processData.slct2contour(
+        contourLayer,maxTime=processData.bndf2contour(
             feedback,
             CHID,
             fds_path,

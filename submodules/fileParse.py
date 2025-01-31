@@ -13,22 +13,17 @@ import numpy as np
 import struct
 from collections import defaultdict
 
-# class to control parsing of slice files
-class SLCT:
+# class to control parsing of cartesian boundary files
+class BNDF:
     def __init__(self,file):
         self.f=open(file,'rb')
         self.quantity=None
-        self.sName=None
-        self.uts=None
-        self.iX=None
-        self.eX=None
-        self.iY=None
-        self.eY=None
-        self.iZ=None
-        self.eZ=None
+        self.shortName=None
+        self.units=None
+        self.nPatches=None
         self.times=None
         self.currentTime=None
-        self.data=None
+        self.patchData={}
 
     def __enter__(self):
         return self
@@ -36,51 +31,161 @@ class SLCT:
     def __exit__(self, exc_type, exc_value, exc_traceback):
         self.f.close()
 
-    # Return relevant SLCT header data
+    # Return relevant cartesian BNDF header data
     def readHeader(self):
         self.f.seek(0)
-        data = self.f.read(142)
-        header = data[:110]
-        size = struct.unpack('>iiiiii', data[115:139])
+        buff = self.f.read(126)
+        header = buff[:110]
+        patchInfo = buff[110:]
         tmp = header.split(b'\x1e')
+        
         self.quantity = tmp[1].decode('utf-8').replace('\x00','').strip(' ')
         self.shortName = tmp[3].decode('utf-8').replace('\x00','').strip(' ')
         self.units = tmp[5].decode('utf-8').replace('\x00','').strip(' ')
 
-        self.iX, self.eX, self.iY, self.eY, self.iZ, self.eZ = size
+        buff = np.frombuffer(patchInfo, dtype=np.int32, count=4)
+        self.nPatches = buff[2]
 
-    # Return array of data times from SLCT file
-    def readTimes(self):
+        for n in range(self.nPatches):
+            self.patchData[n]={}
+            buff = np.frombuffer(self.f.read(44), dtype=np.int32, offset=4)
+            (dx,dy,dz) = (buff[1]-buff[0],buff[3]-buff[2],buff[5]-buff[4])
+            if abs(buff[6]) == 1:
+                dy = dy+1
+                dz = dz+1
+                data_count = dy*dz
+            elif abs(buff[6]) == 2:
+                dx = dx+1
+                dz = dz+1
+                data_count = dx*dz
+            elif abs(buff[6]) == 3:
+                dx = dx+1
+                dy = dy+1
+                data_count = dx*dy
+            # nPts = np.max([dx,1])*np.max([dy,1])*np.max([dz,1])+2
+            self.patchData[n]['dims']=[dx,dy,dz,
+                    buff[0],buff[1],buff[2],
+                    buff[3],buff[4],buff[5]]
+            self.patchData[n]['count']=data_count
+            self.patchData[n]['IOR']=buff[6]
+            self.patchData[n]['OBST_ID']=buff[7]
+            self.patchData[n]['OBST_NM']=buff[8]
+        self.total_value_count=sum([value['count'] for value in self.patchData.values() if 'count' in value])
+
+
+    # Return array of data times from cartesian BNDF file
+    def getTimes(self):
         self.f.seek(0)
         self.readHeader()
-        (NX, NY, NZ) = (self.eX-self.iX, self.eY-self.iY, self.eZ-self.iZ)
-        data = self.f.read()
-        if len(data) % 4 == 0:
-            fullFile = np.frombuffer(data, dtype=np.float32)
+        buff = self.f.read()
+        if len(buff) % 4 != 0:
+            buff = np.frombuffer(buff[:int(len(buff)/4)*4], dtype=np.float32)
         else:
-            remainder = -1*int(len(data) % 4)
-            fullFile = np.frombuffer(data[:remainder], dtype=np.float32)
-        self.times = fullFile[2::(NX+1)*(NY+1)*(NZ+1)+5]
+            buff = np.frombuffer(buff, dtype=np.float32)
+        padding = 2*self.nPatches+3
+        self.times = buff[1::self.total_value_count+padding]
         self.f.seek(0)
 
-    # Return a single time and data array from a slice file
-    def readRecord(self):
+    # Return a single time and data array from a cartesian BNDF file
+    def getRecord(self):
 
+        # if header is not read
+        if self.nPatches is None:
+            self.readHeader()
         # if at the start of the file
-        if self.f.tell()<142:
+        if self.f.tell()<(126+44*self.nPatches):
             self.readHeader()
 
-        (NX, NY, NZ) = (self.eX-self.iX, self.eY-self.iY, self.eZ-self.iZ)
-        shape = (NX+1, NY+1, NZ+1)
-        _ = np.frombuffer(self.f.read(8), dtype=np.float32)
+        _ = _ = self.f.read(4)
         self.currentTime = np.frombuffer(self.f.read(4), dtype=np.float32)
-        _ = np.frombuffer(self.f.read(8), dtype=np.float32)
-        try:
-            self.data = np.frombuffer(self.f.read((NX+1)*(NY+1)*(NZ+1)*4),
-                                 dtype=np.float32)
-            self.data = np.reshape(self.data, shape, order='F')
-        except:
-            self.data = None
+        _ = _ = self.f.read(4)
+        for n in range(self.nPatches):
+             _ = self.f.read(4)
+             self.patchData[n]['values'] = np.frombuffer(self.f.read(self.patchData[n]['count']*4), dtype=np.float32)
+             _ = self.f.read(4)
+       
+# class to control parsing of unstructured (GEOM) boundary files
+class BNDE:
+    def __init__(self,file):
+        self.f=open(file,'rb')
+        self.cc=True
+        self.nVerts=None
+        self.nFaces=None
+        self.verts=None
+        self.faceVerts=None
+        self.faceCenters=None
+        self.values=None
+        self.times=None
+        self.currentTime=None
+
+        # always build geometry when creating class instance
+        self.getGeometry()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.f.close()
+
+    # get geometry for relevant unstructured BNDE file (vertex locations and face center locations)
+    def getGeometry(self):
+        gcfFile=open(self.f.name[:self.f.name.rfind('_')]+'.gcf','rb')
+        buff = np.frombuffer(gcfFile.read(76), dtype=np.int32)
+        self.nVerts = buff[15]
+        self.nFaces = buff[16]
+        if (self.nVerts>0) and (self.nFaces>0):
+            _ = gcfFile.read(4)
+            buff = np.frombuffer(gcfFile.read(self.nVerts*4*3),dtype=np.float32)
+            _ = gcfFile.read(4)
+            self.verts = np.reshape(buff,(self.nVerts,3))
+            _ = gcfFile.read(4)
+            buff = np.frombuffer(gcfFile.read(self.nFaces*4*3),dtype=np.int32)
+            self.faceVerts = np.reshape(buff,(self.nFaces,3))
+            _ = gcfFile.read(4)
+
+            self.faceCenters = np.empty(self.faceVerts.shape)
+            for iaxis in range(3):
+                self.faceCenters[:,iaxis]=self.verts[self.faceVerts-1,iaxis].sum(axis=1)/3
+
+    # get list of time stamps for unstructured BNDE data
+    def getTimes(self):
+        self.f.seek(0)
+        buff = self.f.read()
+        nvv,nfv = np.frombuffer(buff[:56], dtype=np.int32)[12:14]
+        if len(buff) % 4 != 0:
+            buff = np.frombuffer(buff[:int(len(buff)/4)*4], dtype=np.float32)
+        else:
+            buff = np.frombuffer(buff, dtype=np.float32)
+        # assumes there are only EITHER vertex values or face values
+        if nvv>0:
+            padding = nvv+11
+        else:
+            padding = nfv+11
+        self.times = buff[7::padding]
+        self.f.seek(0)
+
+    # Return a single time and data array from an unstructured BNDE file
+    def getRecord(self):
+        # if at start of file, skip over header data
+        if self.f.tell()<(24):
+            self.f.seek(0)
+            self.f.read(24)
+
+        _ = self.f.read(4)
+        self.currentTime = np.frombuffer(self.f.read(4), dtype=np.float32)
+        _ = self.f.read(8)
+        nvv,nfv = np.frombuffer(self.f.read(16), dtype=np.int32)[2:4]
+        _ = self.f.read(4)
+        if nvv>0:
+            self.cc = False
+            _ = self.f.read(4)
+            self.values = np.frombuffer(self.f.read(nvv*4), dtype=np.float32)
+            _ = self.f.read(4)
+        else:
+            self.cc = True
+            _ = self.f.read(4)
+            self.values = np.frombuffer(self.f.read(nfv*4), dtype=np.float32)
+            _ = self.f.read(4)
 
 # function to parse CHID.out for ORIGIN_LAT and ORIGIN_LON
 def parseOUT(file):
@@ -109,7 +214,8 @@ def parseSMV(file):
         linesSMV = f.readlines()
 
         grids=[]
-        SLCTfiles=defaultdict(bool)
+        BNDFfiles=defaultdict(bool)
+        BNDEfiles=defaultdict(bool)
         for il in range(len(linesSMV)):
             if ('GRID' in linesSMV[il]):
                 gridTRNX, gridTRNY, gridTRNZ = parseGRID(linesSMV, il)
@@ -117,17 +223,32 @@ def parseSMV(file):
                               gridTRNY.copy(),
                               gridTRNZ.copy()])
 
-            if ('SLCT' in linesSMV[il]):
-                file = '%s.sf'%(linesSMV[il+1][1:].split('.sf')[0])
-                SLCTfiles[file] = defaultdict(bool)
-                SLCTfiles[file]['QUANTITY'] = linesSMV[il+2].strip()
-                SLCTfiles[file]['SHORTNAME'] = linesSMV[il+3].strip()
-                SLCTfiles[file]['UNITS'] = linesSMV[il+4].strip()
-                SLCTfiles[file]['LINETEXT'] = linesSMV[il]
-                SLCTfiles[file]['MESH']=int(SLCTfiles[file]['LINETEXT'][5:10])
-                SLCTfiles[file]['AGL']=float(SLCTfiles[file]['LINETEXT'][11:20])
+            if (('BNDF' in linesSMV[il]) or ('BNDC' in linesSMV[il])):
+                file = '%s.bf'%(linesSMV[il+1][1:].split('.bf')[0])
+                BNDFfiles[file] = defaultdict(bool)
+                BNDFfiles[file]['QUANTITY'] = linesSMV[il+2].strip()
+                BNDFfiles[file]['SHORTNAME'] = linesSMV[il+3].strip()
+                BNDFfiles[file]['UNITS'] = linesSMV[il+4].strip()
+                BNDFfiles[file]['LINETEXT'] = linesSMV[il]
+                BNDFfiles[file]['MESH']=int(BNDFfiles[file]['LINETEXT'][5:10])
+                if (BNDFfiles[file]['LINETEXT'][3]=='C'):
+                    BNDFfiles[file]['CELL_CENTERD']=True
+                else:
+                    BNDFfiles[file]['CELL_CENTERD']=False
 
-    return SLCTfiles,grids
+            if ('BNDE' in linesSMV[il]):
+                file = '%s.be'%(linesSMV[il+1][1:].split('.be')[0])
+                BNDEfiles[file] = defaultdict(bool)
+                BNDEfiles[file]['QUANTITY'] = linesSMV[il+3].strip()
+                BNDEfiles[file]['SHORTNAME'] = linesSMV[il+4].strip()
+                BNDEfiles[file]['UNITS'] = linesSMV[il+5].strip()
+                BNDEfiles[file]['LINETEXT'] = linesSMV[il]
+                BNDEfiles[file]['MESH']=int(BNDEfiles[file]['LINETEXT'][5:10])
+                # currently the only option
+                BNDEfiles[file]['CELL_CENTERD']=True
+
+
+    return BNDFfiles,BNDEfiles,grids
 
 def parseGRID(lines, i):
     gridPts = [int(x) for x in lines[i+1].replace('\n','').split()]

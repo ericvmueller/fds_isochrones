@@ -12,7 +12,7 @@
 import processing
 import numpy as np
 from scipy import interpolate,signal
-from .fileParse import SLCT,parseSMV,parseOUT
+from .fileParse import BNDE,BNDF,parseSMV,parseOUT
 from collections import defaultdict
 from qgis.PyQt.QtCore import QVariant
 from qgis.gui import QgsMapCanvas
@@ -27,7 +27,14 @@ from qgis.core import (
     QgsVectorLayer)
 
 
-def slct2contour(
+def strip_ghost_cells(dat,d1,d2):
+    dat=np.reshape(dat,(d1,d2), order='F')
+    dat=dat[:-1,:-1]
+    d1-=1
+    d2-=1
+    return dat.flatten(order='F'),d1,d2
+
+def bndf2contour(
     feedback,
     CHID,
     fds_path,
@@ -75,67 +82,95 @@ def slct2contour(
 
     """
 
-    # parse SMV file for SLCT and grid information
-    [SLCTfiles,grids]=parseSMV(fds_path+'/'+CHID+'.smv')
+    # parse SMV file for BNDF/E files and grid information
+    [BNDFfiles,BNDEfiles,grids]=parseSMV(fds_path+'/'+CHID+'.smv')
 
-    # scan SCLT files and extract relevant data
-    slct_found=False
-    t_a=[]
     x=[]
     y=[]
+    z=[]
     dx=[]
     dy=[]
-    for SLCTfile in SLCTfiles:
-        with SLCT(fds_path+'/'+SLCTfile) as slct:
-            slct.readHeader()
-            nm = SLCTfiles[SLCTfile]['MESH']
-            # export if correct quantity
-            if (slct.quantity == QUANTITY):
-                slct_found=True
-                feedback.pushInfo('Reading from '+SLCTfile+'...')
-                # get data shape
-                (NX, NY, NZ) = (slct.eX-slct.iX, slct.eY-slct.iY, slct.eZ-slct.iZ)
-                shape = (NX+1, NY+1, NZ+1)
-                # get output times
-                slct.readTimes()
-                NT = len(slct.times)
-                time = np.zeros(NT)
-                # for each time identify new data points which experience fire arrival
-                for i in range(0, NT):
-                    slct.readRecord()
-                    tmp = np.reshape(slct.data, shape, order='F').squeeze()
+    t_a=[]
 
-                    ## for now, disable contours for non TIME OF ARRIVAL quantities
-                    # # use threshold to identify arrival
-                    # if not QUANTITY=='TIME OF ARRIVAL':
-                    #     arrival_data[(tmp >= threshold) & (arrival_data<0)] = slct.currentTime
+    bndf_found=False
 
-                # Time of arrival can be taken directly
-                if QUANTITY=='TIME OF ARRIVAL':
-                    # a CELL CENTER quantity
-                    tmp = tmp[1:,1:]
-                    # nodes
-                    xn=grids[nm-1][0].T[1]
-                    yn=grids[nm-1][1].T[1]
-                    # x cell centers
-                    xc=(xn[1:] + xn[:-1]) / 2
-                    yc=(yn[1:] + yn[:-1]) / 2
-                    # cell sizes
-                    dxn = xn[1:] - xn[:-1]
-                    dyn = yn[1:] - yn[:-1]
-                    # append to data list
-                    x.append(np.tile(xc,len(yc)))
-                    y.append(np.repeat(yc,len(xc)))
-                    dx.append(np.tile(dxn,len(dyn)))
-                    dy.append(np.repeat(dyn,len(dxn)))
-                    t_a.append(tmp.flatten(order='F'))
+    for BNDFfile in BNDFfiles:
+        if (BNDFfiles[BNDFfile]['QUANTITY']=='FIRE ARRIVAL TIME'):
+            bndf_found=True
+            feedback.pushInfo('Reading from '+BNDFfile+'...')
+            with BNDF(fds_path+'/'+BNDFfile) as bndf:
+                bndf.getTimes()
+                NT = len(bndf.times)
+                for i in range(NT):
+                    bndf.getRecord()
+                    
+                for n in range(bndf.nPatches):
 
-                # anywhere that the fire does not arrive gets max val (to make nice contours)
-                # maxTime=slct.currentTime.item()
-                # arrival_data[arrival_data<0]=maxTime
+                    nm=bndf.patchData[n]['OBST_NM']
+                    cc=BNDFfiles[BNDFfile]['CELL_CENTERD']
+                    
+                    xp=grids[nm-1][0][bndf.patchData[n]['dims'][3]:
+                                      bndf.patchData[n]['dims'][4]+1][:,1]
+                    yp=grids[nm-1][1][bndf.patchData[n]['dims'][5]:
+                                      bndf.patchData[n]['dims'][6]+1][:,1]
+                    zp=grids[nm-1][2][bndf.patchData[n]['dims'][7]:
+                                      bndf.patchData[n]['dims'][8]+1][:,1]
+                    lxp=len(xp)
+                    lyp=len(yp)
+                    lzp=len(zp)
+            
+                    tmp=bndf.patchData[n]['values']            
+                                
+                    # determine the patch orientation and build the point list
+                    if (bndf.patchData[n]['IOR']==3):
+                    # only worry about IOR=3 for now                                  
+                        if cc:
+                            tmp,lxp,lyp=strip_ghost_cells(tmp,lxp,lyp)
+                            xp=xp[:-1]
+                            yp=yp[:-1]
 
-    if not slct_found:
-        raise QgsProcessingException('ERROR: No relevant slice files found')
+                        tmp_dx=(xp[1:]-xp[:-1])
+                        dxp=0*xp
+                        dxp[1:-1]=0.5*(tmp_dx[1:]+tmp_dx[:-1])
+                        dxp[0]=0.5*tmp_dx[0]
+                        dxp[-1]=0.5*tmp_dx[-1]
+
+                        tmp_dx=(yp[1:]-yp[:-1])
+                        dyp=0*yp
+                        dyp[1:-1]=0.5*(tmp_dx[1:]+tmp_dx[:-1])
+                        dyp[0]=0.5*tmp_dx[0]
+                        dyp[-1]=0.5*tmp_dx[-1]
+
+                        xp=np.tile(xp,lyp)
+                        dxp=np.tile(dxp,lyp)
+                        yp=np.repeat(yp,lxp)
+                        dyp=np.repeat(dyp,lxp)
+                        zp=np.repeat(zp,lxp*lyp)
+                    
+                        x.append(xp)
+                        y.append(yp)
+                        z.append(zp)
+                        dx.append(dxp)
+                        dy.append(dyp)
+                        t_a.append(tmp)
+                
+    for BNDEfile in BNDEfiles:
+        if (BNDEfiles[BNDEfile]['QUANTITY']=='FIRE ARRIVAL TIME'):
+            bndf_found=True
+            feedback.pushInfo('Reading from '+BNDEfile+'...')
+            with BNDE(fds_path+'/'+BNDEfile) as bnde:
+                bnde.getTimes()
+                NT = len(bnde.times)
+                for i in range(NT):
+                    bnde.getRecord()
+                    
+                x.append(bnde.faceCenters[:,0])
+                y.append(bnde.faceCenters[:,1])
+                z.append(bnde.faceCenters[:,2])
+                t_a.append(bnde.values)
+
+    if not bndf_found:
+        raise QgsProcessingException('ERROR: No relevant boundary files found')
 
     # strip no arrival values
     x=np.concatenate(x)
@@ -143,11 +178,11 @@ def slct2contour(
     dx=np.concatenate(dx)
     dy=np.concatenate(dy)
     t_a=np.concatenate(t_a)
-    x=x[t_a<9E7]
-    y=y[t_a<9E7]
-    dx=dx[t_a<9E7]
-    dy=dy[t_a<9E7]
-    t_a=t_a[t_a<9E7]
+    x=x[t_a<9E5]
+    y=y[t_a<9E5]
+    dx=dx[t_a<9E5]
+    dy=dy[t_a<9E5]
+    t_a=t_a[t_a<9E5]
     maxTime = max(t_a)
 
     #create temporary layer containing sample points
